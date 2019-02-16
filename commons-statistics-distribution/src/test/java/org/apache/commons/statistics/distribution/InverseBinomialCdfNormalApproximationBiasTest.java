@@ -10,9 +10,9 @@ public class InverseBinomialCdfNormalApproximationBiasTest {
 
     private static final double PROB_OF_SUCCESS = 0.9;
 
-    private static final double TRIALS_EXP_BASE = 1.01;
-    private static final int MIN_TRIALS = 100_000;
-    private static final int MAX_TRIALS = 1_000_000_000;
+    private static final double N_EXP_BASE = 1.01;
+    private static final int MIN_N = 100_000;
+    private static final int MAX_N = 1_000_000_000;
 
     private static final double MIN_P = 0.8;
     private static final double MAX_P = 0.999;
@@ -21,6 +21,19 @@ public class InverseBinomialCdfNormalApproximationBiasTest {
     private static final double P_EXP_BASE = 1 / Math.pow((1 - MIN_P) / (1 - MAX_P), 1.0 / P_STEPS);
 
     public static void main(String[] args) {
+        for (double p : new double[] {0.77, 0.9, 0.99}) {
+            System.out.println("CDF parameter = " + p);
+            String s = IntStream.range(MIN_N, MIN_N + 100)
+                    .map(n -> inverseBinomialCdfNormalApproximationError(PROB_OF_SUCCESS, n, p))
+                    .mapToObj(Integer::toString)
+                    .collect(Collectors.joining(" "));
+            System.out.println(s);
+            String s2 = IntStream.range(MAX_N - 100, MAX_N)
+                    .map(n -> inverseBinomialCdfNormalApproximationError(PROB_OF_SUCCESS, n, p))
+                    .mapToObj(Integer::toString)
+                    .collect(Collectors.joining(" "));
+            System.out.println(s2);
+        }
         for (double pComplement = 1.0 - MIN_P; pComplement >= 1.0 - MAX_P;
              pComplement *= P_EXP_BASE) {
             double p = 1.0 - pComplement;
@@ -32,30 +45,19 @@ public class InverseBinomialCdfNormalApproximationBiasTest {
     }
 
     private static double estimateMeanError(double p) {
-        List<Integer> trialsList = new ArrayList<>();
-        for (int baseTrials = MIN_TRIALS; baseTrials < MAX_TRIALS;
-             baseTrials *= TRIALS_EXP_BASE) {
-            int nextTrials = (int) (baseTrials * TRIALS_EXP_BASE);
-            // Sample size of 1000 per "trials log" ensures approximately 3-digit precision
-            // (+/- 0.001) of MAE. That could be verified by removing seed from REPEATABLE_RANDOM
-            // and seeing how this program prints different values from run to run.
-            int trialsSampleSize = 1000;
-            Collection<Integer> trialsSelection =
-                    generateRandomSelection(trialsSampleSize, baseTrials, nextTrials);
-            for (Integer trials : trialsSelection) {
-                trialsList.add(trials);
-            }
+        List<Integer> ns = new ArrayList<>();
+        for (int baseN = MIN_N; baseN < MAX_N; baseN *= N_EXP_BASE) {
+            int nLimit = (int) (baseN * N_EXP_BASE);
+            // Sample size of 1000 per "n log" ensures approximately 3-digit precision (+/- 0.001)
+            // of MAE. That could be verified by removing seed from REPEATABLE_RANDOM and seeing how
+            // this program prints different values from run to run.
+            int nsSampleSize = 1000;
+            ns.addAll(generateRandomSelection(nsSampleSize, baseN, nLimit));
         }
-        return trialsList
+        return ns
                 .stream()
                 .parallel()
-                .mapToDouble(trials -> {
-                    int binomialResult = new BinomialDistribution(trials, PROB_OF_SUCCESS)
-                            .inverseCumulativeProbability(p);
-                    double approxNormalResult =
-                            inverseBinomialCdfNormalApproximation(PROB_OF_SUCCESS, p, trials);
-                    return approxNormalResult - binomialResult;
-                })
+                .mapToInt(n -> inverseBinomialCdfNormalApproximationError(PROB_OF_SUCCESS, n, p))
                 .average()
                 .getAsDouble();
     }
@@ -63,7 +65,7 @@ public class InverseBinomialCdfNormalApproximationBiasTest {
     private static Collection<Integer> generateRandomSelection(
             int sampleSize, int origin, int bound) {
         if (bound - origin <= sampleSize) {
-            return IntStream.range(origin, bound).mapToObj(x -> x).collect(Collectors.toList());
+            return IntStream.range(origin, bound).boxed().collect(Collectors.toList());
         }
         Set<Integer> selected = new HashSet<>();
         while (selected.size() < sampleSize) {
@@ -72,10 +74,30 @@ public class InverseBinomialCdfNormalApproximationBiasTest {
         return selected;
     }
 
+    /**
+     * @param probOfSuccess the parameter of BinomialDistribution
+     * @param n the parameter of BinomialDistribution
+     * @param p the parameter of CDF
+     */
+    private static int inverseBinomialCdfNormalApproximationError(
+            double probOfSuccess, int n, double p) {
+        int binomialResult = new BinomialDistribution(n, probOfSuccess)
+                .inverseCumulativeProbability(p);
+        int approxNormalResult = Math.toIntExact(Math.round(
+                inverseBinomialCdfNormalApproximation(probOfSuccess, n, p)));
+        return approxNormalResult - binomialResult;
+    }
+
+
+    /**
+     * @param probOfSuccess the parameter of BinomialDistribution
+     * @param n the parameter of BinomialDistribution
+     * @param p the parameter of CDF
+     */
     private static double inverseBinomialCdfNormalApproximation(
-            double probOfSuccess, double p, int trials) {
-        double mean = trials * probOfSuccess;
-        double stdDev = Math.sqrt(trials * probOfSuccess * (1 - probOfSuccess));
+            double probOfSuccess, int n, double p) {
+        double mean = n * probOfSuccess;
+        double stdDev = Math.sqrt(n * probOfSuccess * (1 - probOfSuccess));
         return new NormalDistribution(mean, stdDev).inverseCumulativeProbability(p);
     }
 }
